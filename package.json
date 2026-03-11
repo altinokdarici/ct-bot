@@ -5,7 +5,8 @@
   "description": "Teams ↔ Claude Code bridge",
   "scripts": {
     "build": "tsc",
-    "start": "node --env-file=.env --watch src/index.ts"
+    "start": "node --env-file=.env --watch src/index.ts",
+    "setup": "node src/setup.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.71",
