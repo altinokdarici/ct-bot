@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code from your phone</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    /* Fluent / Teams dark theme palette */
+    --bg: #1f1f1f;
+    --bg-subtle: #292929;
+    --surface: #303030;
+    --surface-hover: #383838;
+    --border: rgba(255,255,255,0.08);
+    --border-strong: rgba(255,255,255,0.14);
+    --text: #ffffff;
+    --text-secondary: #d6d6d6;
+    --text-tertiary: #adadad;
+    --text-disabled: #707070;
+
+    /* Microsoft brand / Fluent accent */
+    --brand: #6264a7;           /* Teams purple */
+    --brand-light: #7b83eb;
+    --brand-bg: rgba(98,100,167,0.15);
+    --blue: #0078d4;            /* Microsoft blue */
+    --blue-light: #2899f5;
+    --green: #6ccb5f;
+    --orange: #f7630c;
+
+    /* Typography */
+    --font: 'Segoe UI', 'Segoe UI Web', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: 'Cascadia Code', 'Cascadia Mono', 'Consolas', 'Courier New', monospace;
+
+    /* Depth (Fluent shadow levels) */
+    --shadow-4: 0 2px 4px rgba(0,0,0,0.24);
+    --shadow-8: 0 4px 8px rgba(0,0,0,0.28);
+    --shadow-16: 0 8px 16px rgba(0,0,0,0.28);
+    /* Fluent corner radii */
+    --radius-sm: 4px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+  }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 20px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* ─── Slide deck ─── */
+  .deck { position: relative; width: 100%; height: 100%; }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    align-items: flex-start;
+    padding: 8rem 6rem 4rem;
+    opacity: 0;
+    transform: translateX(40px);
+    pointer-events: none;
+    transition: opacity 0.3s cubic-bezier(0.33,0,0.67,1), transform 0.3s cubic-bezier(0.33,0,0.67,1);
+  }
+  .slide.active {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+  }
+  /* ─── Typography (Fluent type ramp) ─── */
+  h1 {
+    font-family: var(--font);
+    font-size: 3.8rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.4rem;
+    line-height: 1.15;
+    color: var(--text);
+  }
+  h2 {
+    font-family: var(--font);
+    font-size: 2.8rem;
+    font-weight: 600;
+    margin-bottom: 1.5rem;
+    color: var(--brand-light);
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-family: var(--font);
+    font-size: 1.35rem;
+    font-weight: 400;
+    color: var(--text-tertiary);
+    margin-bottom: 2rem;
+  }
+
+  /* ─── Content ─── */
+  .content { width: 100%; }
+  .slide[data-slide="0"] { align-items: center; text-align: center; justify-content: center; padding-top: 1.5rem; }
+  .content ul { list-style: none; padding: 0; }
+  .content ul li {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.9rem 0;
+    font-size: 1.55rem;
+    line-height: 1.65;
+    color: var(--text-secondary);
+  }
+  .content ul li::before {
+    content: '';
+    flex-shrink: 0;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--brand-light);
+    position: relative;
+    top: -0.15em;
+  }
+  .content ul li strong { color: var(--text); font-weight: 600; }
+  .content ul li em { color: var(--text); font-style: italic; }
+
+  /* ─── Inline code ─── */
+  code, .code {
+    font-family: var(--font-mono);
+    background: var(--surface);
+    padding: 0.1em 0.45em;
+    border-radius: var(--radius-sm);
+    font-size: 0.88em;
+    color: var(--brand-light);
+    border: 1px solid var(--border);
+  }
+
+  /* ─── Code blocks ─── */
+  pre {
+    background: var(--bg-subtle);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    padding: 1.1rem 1.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.95rem;
+    line-height: 1.7;
+    overflow-x: auto;
+    margin: 1rem 0;
+    width: 100%;
+    box-shadow: var(--shadow-4);
+  }
+  pre.mermaid {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    padding: 1.5rem 0;
+    text-align: center;
+    width: 100%;
+  }
+  pre.mermaid svg {
+    max-width: 100%;
+    height: auto;
+  }
+  /* Fluent-style progress bar at top */
+  .slide-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--brand), var(--brand-light));
+    transition: width 0.3s cubic-bezier(0.33,0,0.67,1);
+    z-index: 20;
+    border-radius: 0 2px 2px 0;
+  }
+
+  /* ─── Stagger animation ─── */
+  .slide.active .stagger li {
+    animation: fadeInUp 0.3s cubic-bezier(0.33,0,0.67,1) both;
+  }
+  .slide.active .stagger li:nth-child(1) { animation-delay: 0.04s; }
+  .slide.active .stagger li:nth-child(2) { animation-delay: 0.1s; }
+  .slide.active .stagger li:nth-child(3) { animation-delay: 0.16s; }
+  .slide.active .stagger li:nth-child(4) { animation-delay: 0.22s; }
+  .slide.active .stagger li:nth-child(5) { animation-delay: 0.28s; }
+  .slide.active .stagger li:nth-child(6) { animation-delay: 0.34s; }
+  .slide.active .stagger li:nth-child(7) { animation-delay: 0.40s; }
+  .slide.active .stagger li:nth-child(8) { animation-delay: 0.46s; }
+
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  /* ─── Highlight callout (Fluent MessageBar style) ─── */
+  .highlight-box {
+    background: var(--brand-bg);
+    border-left: 3px solid var(--brand);
+    border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    padding: 0.75rem 1.1rem;
+    margin: 0.8rem 0;
+    font-size: 1.2rem;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+
+  /* ─── Title slide accent ─── */
+  .title-accent {
+    width: 48px;
+    height: 4px;
+    background: linear-gradient(90deg, var(--brand), var(--brand-light));
+    border-radius: 2px;
+    margin-bottom: 1.5rem;
+  }
+  .title-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    background: var(--brand-bg);
+    border: 1px solid rgba(98,100,167,0.3);
+    border-radius: 100px;
+    padding: 0.3rem 0.9rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--brand-light);
+    margin-top: 1.5rem;
+  }
+  .title-badge .icon { font-size: 0.9rem; }
+
+  /* ─── FAB navigation ─── */
+  .nav-fabs {
+    position: fixed;
+    bottom: 1.25rem;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    z-index: 20;
+  }
+  .nav-fab {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text-secondary);
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-8);
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .nav-fab:hover {
+    background: var(--surface-hover);
+    border-color: var(--brand);
+    color: var(--brand-light);
+  }
+  .nav-fab:active {
+    background: var(--brand-bg);
+  }
+  .nav-fab:disabled {
+    opacity: 0.3;
+    cursor: default;
+    pointer-events: none;
+  }
+  .nav-fab-counter {
+    font-family: var(--font);
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    min-width: 3rem;
+    text-align: center;
+  }
+
+  /* ─── Right-side scrubber ─── */
+  .scrubber {
+    position: fixed;
+    right: 1.5rem;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    z-index: 20;
+  }
+  .scrubber-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid var(--text-disabled);
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  }
+  .scrubber-dot:hover {
+    border-color: var(--brand-light);
+    transform: scale(1.3);
+  }
+  .scrubber-dot.active {
+    background: var(--brand-light);
+    border-color: var(--brand-light);
+  }
+
+  /* ─── Responsive ─── */
+  @media (max-width: 900px) {
+    .slide { padding: 2rem 2.5rem; }
+    h1 { font-size: 2rem; }
+    h2 { font-size: 1.35rem; }
+    .content ul li { font-size: 0.95rem; }
+    .file-grid { grid-template-columns: 1fr; }
+    .diagram .box { font-size: 0.7rem; padding: 0.5rem 0.7rem; }
+  }
+</style>
+</head>
+<body>
+
+<div class="slide-progress" id="progress" style="width: 8.33%"></div>
+
+<div class="deck" id="deck">
+
+  <!-- Slide 1: Title -->
+  <div class="slide active" data-slide="0">
+    <div class="title-accent"></div>
+    <h1>Claude Code from your phone</h1>
+    <h3>A Teams bridge for coding on the go</h3>
+    <div class="title-badge">
+      <span class="icon">&#9783;</span> Microsoft Teams + Claude Agent SDK
+    </div>
+    <div style="margin-top: 2.5rem; color: var(--text-tertiary); font-size: 0.85rem; font-weight: 600;">
+      Altinok Darici
+    </div>
+  </div>
+
+  <!-- Slide 2: Why -->
+  <div class="slide" data-slide="1">
+    <div class="content">
+      <h2>Why?</h2>
+      <ul class="stagger">
+        <li>Claude Code is powerful &mdash; but you need a terminal in front of you</li>
+        <li>I wanted to send it tasks from my phone: while commuting, between meetings, wherever</li>
+        <li>Teams is already on my phone, already authenticated, already where I work</li>
+        <li>So I built a bridge: <strong>Teams message in &rarr; Claude Code runs &rarr; response back in the thread</strong></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Slide 3: Demo (video) -->
+  <div class="slide" data-slide="2">
+    <div class="content">
+      <h2>How it looks</h2>
+      <div style="display:flex; align-items:center; justify-content:center; background:var(--surface); border:2px dashed var(--border-strong); border-radius:var(--radius-lg); padding:4rem 2rem; margin:1rem 0;">
+        <span style="color:var(--text-disabled); font-size:1.3rem;">Video recording goes here</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 4: Features -->
+  <div class="slide" data-slide="3">
+    <div class="content">
+      <h2>Features</h2>
+      <ul class="stagger">
+        <li>Each Teams thread is its own Claude Code session &mdash; multiple projects at once</li>
+        <li>Switch projects mid-conversation &mdash; just say <em>"work on project-xyz, fix the tests"</em></li>
+        <li>Task scheduler &mdash; cron-based recurring and one-time tasks, triggered through Teams</li>
+        <li>Shared memory file injected into every session &mdash; repo locations, codespace names, user preferences</li>
+        <li>Full tool access: Read, Edit, Bash, Grep, and everything Claude Code can do</li>
+        <li>Codespace and MDB support &mdash; spawn or connect new machine and run Claude Code remotely via SSH <span style="color:var(--orange); font-size:0.85em; font-weight:600;">(WIP)</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Slide 5: Architecture -->
+  <div class="slide" data-slide="4">
+    <div class="content">
+      <h2>How it's built</h2>
+      <pre class="mermaid">
+graph LR
+    A["&nbsp;&nbsp;📱 Teams Channel&nbsp;&nbsp;"]:::teams -->|"⚡ WebSocket"| B["🔀 Bridge\n\nOrchestrator · Sessions · Claude SDK"]:::bridge
+    B -->|"query( )"| C["🤖 Claude Code"]:::claude
+    C -.->|"streaming response"| B
+    B -.->|"HTTP API edit message"| A
+    C -->|"create_task( )"| D["⏰ Task Scheduler\n\ncron · one-time"]:::scheduler
+    D -->|"sends message"| A
+
+    classDef teams fill:#464775,stroke:#7b83eb,stroke-width:2px,color:#fff,font-size:20px
+    classDef bridge fill:#1a3a5c,stroke:#2899f5,stroke-width:2px,color:#fff,font-size:20px
+    classDef claude fill:#1a3c2a,stroke:#6ccb5f,stroke-width:2px,color:#6ccb5f,font-size:20px
+    classDef scheduler fill:#4a3520,stroke:#f7630c,stroke-width:2px,color:#f7630c,font-size:20px
+      </pre>
+      <div style="display:flex; gap:1rem; margin-top:0.5rem; flex-wrap:wrap;">
+        <div class="highlight-box" style="flex:1; min-width:200px;">Runs on my desktop 24/7</div>
+        <div class="highlight-box" style="flex:1; min-width:200px;">No tunnel, no ngrok &mdash; pure outbound connections</div>
+        <div class="highlight-box" style="flex:1; min-width:200px;">No polling &mdash; WebSocket push</div>
+        <div class="highlight-box" style="flex:1; min-width:200px;">Direct Teams API via <code>az</code> CLI tokens</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Slide 6: What we learned -->
+  <div class="slide" data-slide="5">
+    <div class="content">
+      <h2>What we learned</h2>
+      <ul class="stagger">
+        <li>Agent SDK lets you customize how Claude Code is spawned &mdash; insanely powerful. SSH into remote machines, codespaces, anything</li>
+        <li>Some parts must be deterministic, most can be probabilistic &mdash; Teams communication is deterministic code with guardrails; features like task scheduler, GitHub, ADO connections are built as skills</li>
+        <li>Deterministic code is the only way to get 100% guardrails (as long as Claude doesn't modify the code 😅)</li>
+        <li>Full audit logs are essential &mdash; without traces, LLM bugs are impossible to reproduce</li>
+        <li>Prompt engineering matters &mdash; <em>"Don't do X"</em> is weaker than <em>"Do Y instead, because Z"</em></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Slide 7: Thanks -->
+  <div class="slide" data-slide="6" style="align-items:center; text-align:center; justify-content:center;">
+    <div class="content" style="text-align:center;">
+      <h2 style="font-size:3rem;">Thanks!</h2>
+      <p style="color:var(--text-tertiary); font-size:1.3rem; margin-top:0.5rem;">Questions?</p>
+      <a href="https://github.com/altinokdarici/ct-bot" style="color:var(--brand-light); font-family:var(--font-mono); font-size:1rem; margin-top:1.5rem; display:inline-block; text-decoration:none; border-bottom:1px solid var(--brand);">github.com/altinokdarici/ct-bot</a>
+    </div>
+  </div>
+
+</div>
+
+<div class="scrubber" id="scrubber"></div>
+
+<div class="nav-fabs">
+  <button class="nav-fab" id="prevBtn" disabled aria-label="Previous slide">&#8592;</button>
+  <span class="nav-fab-counter" id="counter">1 / 7</span>
+  <button class="nav-fab" id="nextBtn" aria-label="Next slide">&#8594;</button>
+</div>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'dark',
+    look: 'handDrawn',
+    themeVariables: {
+      primaryColor: '#6264a7',
+      primaryTextColor: '#ffffff',
+      primaryBorderColor: '#7b83eb',
+      lineColor: '#7b83eb',
+      secondaryColor: '#303030',
+      tertiaryColor: '#292929',
+      fontSize: '22px',
+      fontFamily: 'Segoe UI, sans-serif'
+    }
+  });
+</script>
+<script>
+(function() {
+  const slides = document.querySelectorAll('.slide');
+  const counter = document.getElementById('counter');
+  const progress = document.getElementById('progress');
+  const prevBtn = document.getElementById('prevBtn');
+  const nextBtn = document.getElementById('nextBtn');
+  const scrubber = document.getElementById('scrubber');
+  const total = slides.length;
+  let current = 0;
+  let transitioning = false;
+
+  // Build scrubber dots
+  var dots = [];
+  for (var i = 0; i < total; i++) {
+    var dot = document.createElement('button');
+    dot.className = 'scrubber-dot' + (i === 0 ? ' active' : '');
+    dot.setAttribute('aria-label', 'Slide ' + (i + 1));
+    dot.dataset.slide = i;
+    dot.addEventListener('click', function(e) {
+      e.stopPropagation();
+      goTo(parseInt(this.dataset.slide));
+    });
+    scrubber.appendChild(dot);
+    dots.push(dot);
+  }
+
+  function updateChrome() {
+    counter.textContent = (current + 1) + ' / ' + total;
+    progress.style.width = ((current + 1) / total * 100) + '%';
+    prevBtn.disabled = current === 0;
+    nextBtn.disabled = current === total - 1;
+    for (var i = 0; i < total; i++) {
+      dots[i].classList.toggle('active', i === current);
+    }
+  }
+
+  function goTo(n) {
+    if (n < 0 || n >= total || n === current || transitioning) return;
+    transitioning = true;
+    var dir = n > current ? 1 : -1;
+
+    // Hide ALL slides first (clean up any leftover states)
+    for (var i = 0; i < total; i++) {
+      if (i !== current && i !== n) {
+        slides[i].classList.remove('active');
+        slides[i].style.transition = 'none';
+        slides[i].style.opacity = '0';
+        slides[i].style.transform = 'translateX(40px)';
+      }
+    }
+
+    var prev = slides[current];
+    var next = slides[n];
+
+    // Exit current slide
+    prev.classList.remove('active');
+    prev.style.opacity = '0';
+    prev.style.transform = dir > 0 ? 'translateX(-40px)' : 'translateX(40px)';
+
+    // Prepare next slide at off-screen position (no transition)
+    next.style.transition = 'none';
+    next.style.opacity = '0';
+    next.style.transform = dir > 0 ? 'translateX(40px)' : 'translateX(-40px)';
+    next.classList.add('active');
+
+    // Force reflow to commit the starting position
+    void next.offsetWidth;
+
+    // Now animate to final position
+    next.style.transition = '';
+    next.style.opacity = '1';
+    next.style.transform = 'translateX(0)';
+
+    current = n;
+    updateChrome();
+
+    setTimeout(function() {
+      transitioning = false;
+      // Keep prev hidden explicitly
+      prev.style.transition = 'none';
+      prev.style.opacity = '0';
+      // Clean next inline styles — .active class handles it
+      next.style.transition = '';
+      next.style.opacity = '';
+      next.style.transform = '';
+    }, 350);
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+      e.preventDefault();
+      goTo(current + 1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      goTo(current - 1);
+    }
+  });
+
+  prevBtn.addEventListener('click', function(e) { e.stopPropagation(); goTo(current - 1); });
+  nextBtn.addEventListener('click', function(e) { e.stopPropagation(); goTo(current + 1); });
+
+  // Touch swipe
+  var touchStartX = 0;
+  document.addEventListener('touchstart', function(e) {
+    touchStartX = e.touches[0].clientX;
+  });
+  document.addEventListener('touchend', function(e) {
+    var dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) > 50) {
+      goTo(current + (dx < 0 ? 1 : -1));
+    }
+  });
+})();
+</script>
+
+</body>
+</html>

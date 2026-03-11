@@ -1,0 +1,15 @@
+{
+  "name": "ct-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Teams ↔ Claude Code bridge",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --env-file=.env --watch src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.71",
+    "@types/node": "^25.3.5",
+    "typescript": "^5.9.3"
+  }
+}

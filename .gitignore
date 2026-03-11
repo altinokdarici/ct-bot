@@ -1,0 +1,8 @@
+node_modules/
+sessions.json
+memory.md
+codespace-telemetry-debug.log
+audit-logs/
+.claude/settings.local.json
+.env
+presentation/assets/

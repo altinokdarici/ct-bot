@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "rootDir": "src",
+    "noEmit": true,
+
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "moduleDetection": "force",
+    "target": "esnext",
+    "lib": ["esnext"],
+    "types": ["node"],
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "noUncheckedSideEffectImports": true,
+
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
+  }
+}
