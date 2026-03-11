@@ -165,7 +165,7 @@ export async function runClaudeSession(opts: {
       preset: "claude_code",
       append: buildSystemPrompt(cwd),
     };
-    queryOptions.settingSources = ["project"];
+    queryOptions.settingSources = ["global", "project"];
     queryOptions.maxTurns = 30;
   }
 
