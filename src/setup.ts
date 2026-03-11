@@ -430,7 +430,12 @@ async function setupChannel(): Promise<string | null> {
   const secretCode = `setup-${randomBytes(4).toString("hex")}`;
 
   console.log();
-  console.log(`  ${BOLD}Post this exact message in the Teams channel you want to use:${RESET}`);
+  console.log(`  ${YELLOW}${BOLD}⚠  Create a private channel just for yourself.${RESET}`);
+  console.log(`  ${YELLOW}Do NOT add anyone else or share this channel — the bot runs${RESET}`);
+  console.log(`  ${YELLOW}with your credentials and full permissions. Anyone in the${RESET}`);
+  console.log(`  ${YELLOW}channel can send commands that execute on your machine.${RESET}`);
+  console.log();
+  console.log(`  ${BOLD}Post this exact message in that channel:${RESET}`);
   console.log();
   console.log(`    ${CYAN}${BOLD}${secretCode}${RESET}`);
   console.log();
