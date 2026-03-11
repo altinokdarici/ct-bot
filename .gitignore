@@ -3,7 +3,7 @@ sessions.json
 memory.md
 codespace-telemetry-debug.log
 audit-logs/
-.claude/settings.local.json
+.claude/
 .env
 presentation/assets/
 *.mov
