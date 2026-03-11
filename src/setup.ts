@@ -25,7 +25,8 @@ function heading(msg: string) { console.log(`\n${BOLD}${CYAN}${msg}${RESET}\n`);
 
 function commandExists(cmd: string): boolean {
   try {
-    execSync(`which ${cmd}`, { stdio: "pipe" });
+    const check = process.platform === "win32" ? `where ${cmd}` : `which ${cmd}`;
+    execSync(check, { stdio: "pipe" });
     return true;
   } catch {
     return false;
