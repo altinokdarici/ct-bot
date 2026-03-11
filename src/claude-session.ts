@@ -15,63 +15,66 @@ function loadMemory(): string {
   return "# Memory";
 }
 
-const SYSTEM_PROMPT = `# MANDATORY — READ BEFORE DOING ANYTHING ELSE
+const SYSTEM_PROMPT = `<CRITICAL-RULES>
+<RULE name="HTML-ONLY" priority="HIGHEST">
+ALL your responses are rendered in Microsoft Teams which ONLY supports HTML.
+If you use markdown (**, *, \`, \`\`\`, ###, - item, [text](url), etc.) it will show as UGLY RAW TEXT to the user.
 
-You are communicating with a user through Microsoft Teams.
-Your current working directory (cwd) is: {{CWD}}
-Your session is configured for THIS project only — skills, CLAUDE.md, and project settings are loaded from this cwd.
+YOU MUST USE HTML TAGS FOR EVERYTHING. ZERO MARKDOWN. NO EXCEPTIONS.
 
-## HANDOFF RULE (highest priority)
-If the user's message references a project, repo, or directory that is NOT inside your cwd ({{CWD}}), you MUST:
-1. Look up the project path in your MEMORY below.
-2. If not in memory, ask the user for the path.
-3. Output this marker in your response — nothing else is needed:
-   <!--HANDOFF:local:/absolute/path:INTENT-->
-   INTENT = the user's task with the "switch to" / "work on" part removed. Omit if there's no task beyond switching.
-4. Examples:
-   - User: "work on project-xyz issue #28" → <!--HANDOFF:local:/path/to/project-xyz:work on issue #28-->
-   - User: "switch to other-project" → <!--HANDOFF:local:/path/to/other-project-->
+  <b>bold</b>           NEVER **bold**
+  <em>italic</em>       NEVER *italic*
+  <code>x</code>        NEVER \`x\`
+  <pre>code</pre>       NEVER \`\`\`code\`\`\`
+  <h3>Title</h3>        NEVER ### Title
+  <a href="U">t</a>     NEVER [t](U)
+  <ul><li>item</li></ul> NEVER - item
+  <ol><li>step</li></ol> NEVER 1. step
+  <br>                   NEVER blank lines for spacing
+  <p>text</p>            wrap every paragraph
 
-DO NOT attempt to read files, create worktrees, spawn agents, or do any work in the target project. The handoff marker restarts your session in the correct directory with full project config. DO NOT tell the user to open a new terminal.
-
-Even though you CAN read files outside your cwd via absolute paths, you MUST NOT — the session lacks the target project's skills, CLAUDE.md, and settings. Handoff is the only correct action.
-
-## Response formatting — TEAMS HTML ONLY
-Your output is rendered directly as HTML in Microsoft Teams. Markdown will appear as raw text. Every response MUST use HTML tags.
-
-Quick reference (use these, never markdown equivalents):
-  Bold:        <b>text</b>              not **text**
-  Italic:      <em>text</em>            not *text*
-  Inline code: <code>name</code>        not \`name\`
-  Code block:  <pre>code here</pre>     not \`\`\`
-  Heading:     <h3>Title</h3>           not ### Title
-  Link:        <a href="URL">text</a>   not [text](URL)
-  List:        <ul><li>item</li></ul>   not - item
-  Numbered:    <ol><li>step</li></ol>   not 1. step
-  Line break:  <br>                     not blank line
-  Paragraph:   <p>text</p>
-  Quote:       <blockquote>text</blockquote>
-
-Example of a well-formatted response:
+Example response:
 <p>I found <b>3 issues</b> in <code>eslint.config.ts</code>:</p>
 <ol>
 <li>Missing <code>consistent-type-imports</code> rule</li>
-<li>No ban on <code>style={}</code> JSX prop</li>
-<li>No DOM manipulation restriction</li>
+<li>No ban on <code>style={{}}</code> JSX prop</li>
 </ol>
-<p>Here's the fix:</p>
+<p>Here is the fix:</p>
 <pre>"@typescript-eslint/consistent-type-imports": ["error"]</pre>
-<p>See <a href="https://github.com/org/repo/issues/28">issue #28</a> for details.</p>
 
-Be concise but thorough. If you make file changes, briefly summarize what you did.
+Before finishing every response, re-check: does my output contain ANY markdown syntax? If yes, convert it to HTML.
+</RULE>
 
-## MEMORY
+<RULE name="HANDOFF" priority="HIGH">
+Your cwd is: {{CWD}}. This session is scoped to THIS project only.
+
+If the user references a project/repo/directory NOT inside {{CWD}}:
+1. Look up the path in MEMORY below.
+2. If not in memory, ask the user.
+3. Emit ONLY: &lt;!--HANDOFF:local:/absolute/path:INTENT--&gt;
+   (INTENT = the task, omit if just switching)
+4. Do NO work in the other project. The marker restarts your session there.
+Do NOT read files outside cwd. Do NOT tell the user to open a terminal.
+</RULE>
+
+<RULE name="WORKIQ" priority="HIGH">
+You have WorkIQ MCP tools for querying the user's Microsoft 365 data (emails, calendar, documents, Teams messages, people).
+
+For ANY work-related question (meetings, emails, files, colleagues, schedules), use these tools:
+<ul>
+<li><code>mcp__workiq__accept_eula</code> — Call ONCE if <code>ask_work_iq</code> fails with a EULA error, then retry.</li>
+<li><code>mcp__workiq__ask_work_iq</code> — Main tool. Pass the question in natural language.</li>
+<li><code>mcp__workiq__get_debug_link</code> — Get a diagnostic link if a query fails.</li>
+</ul>
+Prefer WorkIQ over web search for anything about the user's work context.
+</RULE>
+</CRITICAL-RULES>
+
+<MEMORY>
 Persistent memory file at {{MEMORY_PATH}}. Update it when the user shares repo locations, preferences, or anything worth remembering.
-
-Current memory:
----
+Current contents:
 {{MEMORY}}
----`;
+</MEMORY>`;
 
 function buildSystemPrompt(cwd: string): string {
   const memory = loadMemory();
@@ -112,6 +115,9 @@ function summarizeToolInput(tool: string, input: any): string {
     case "Grep": return `${input.pattern ?? ""} ${input.path ?? ""}`.trim();
     case "WebSearch": return input.query ?? "";
     case "WebFetch": return input.url ?? "";
+    case "mcp__workiq__ask_work_iq": return input.question ?? input.query ?? JSON.stringify(input).slice(0, 120);
+    case "mcp__workiq__accept_eula": return "accepting EULA";
+    case "mcp__workiq__get_debug_link": return "fetching debug link";
     default: return JSON.stringify(input).slice(0, 100);
   }
 }
@@ -142,6 +148,13 @@ export async function runClaudeSession(opts: {
     abortController,
     permissionMode: "bypassPermissions" as const,
     allowDangerouslySkipPermissions: true,
+    mcpServers: {
+      workiq: {
+        type: "stdio" as const,
+        command: "npx",
+        args: ["-y", "@microsoft/workiq", "mcp"],
+      },
+    },
   };
 
   if (resumeSessionId) {
@@ -168,6 +181,8 @@ export async function runClaudeSession(opts: {
       case "system": {
         if (msg.subtype === "init") {
           sessionId = msg.session_id;
+          const mcpServers = msg.mcp_servers ?? [];
+          console.log(`[sdk] MCP servers: ${JSON.stringify(mcpServers)}`);
           emit({ type: "init", sessionId, model: msg.model ?? "unknown" });
         }
         break;

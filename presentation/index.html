@@ -353,13 +353,12 @@
   </div>
 
   <!-- Slide 3: Demo (video) -->
-  <div class="slide" data-slide="2">
-    <div class="content">
-      <h2>How it looks</h2>
-      <div style="display:flex; align-items:center; justify-content:center; background:var(--surface); border:2px dashed var(--border-strong); border-radius:var(--radius-lg); padding:4rem 2rem; margin:1rem 0;">
-        <span style="color:var(--text-disabled); font-size:1.3rem;">Video recording goes here</span>
-      </div>
-    </div>
+  <div class="slide" data-slide="2" style="padding:2rem 3rem; justify-content:center; align-items:center;">
+    <h2 style="margin-bottom:0.8rem;">How it looks</h2>
+    <video controls playsinline onloadedmetadata="this.playbackRate=2.0" style="width:95%; max-height:85vh; border-radius:var(--radius-lg); border:1px solid var(--border-strong); box-shadow:var(--shadow-16); background:#000;">
+      <source src="demo.mov" type="video/mp4">
+      Your browser does not support the video tag.
+    </video>
   </div>
 
   <!-- Slide 4: Features -->
