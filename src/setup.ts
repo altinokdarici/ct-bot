@@ -327,10 +327,10 @@ async function checkPrereqs(): Promise<boolean> {
   // 1. Node.js
   const nodeVersion = process.version;
   const major = parseInt(nodeVersion.slice(1), 10);
-  if (major >= 18) {
+  if (major >= 22) {
     ok(`Node.js ${nodeVersion}`);
   } else {
-    fail(`Node.js ${nodeVersion} — need v18+`);
+    fail(`Node.js ${nodeVersion} — need v22+ (native TS, fetch, WebSocket)`);
     allGood = false;
   }
 
@@ -471,6 +471,12 @@ async function main() {
   console.log(`\n${BOLD}╔══════════════════════════════════════╗${RESET}`);
   console.log(`${BOLD}║  Teams ↔ Claude Code Bridge Setup    ║${RESET}`);
   console.log(`${BOLD}╚══════════════════════════════════════╝${RESET}`);
+
+  console.log(`\n  ${RED}${BOLD}⚠  WARNING${RESET}`);
+  console.log(`  ${YELLOW}This bot runs Claude Code with ${BOLD}--dangerously-skip-permissions${RESET}${YELLOW}.${RESET}`);
+  console.log(`  ${YELLOW}It uses ${BOLD}your Azure credentials${RESET}${YELLOW} (az login) to connect to Teams.${RESET}`);
+  console.log(`  ${YELLOW}Claude Code will have ${BOLD}full access${RESET}${YELLOW} to your filesystem and tools${RESET}`);
+  console.log(`  ${YELLOW}with no permission prompts. Only use in a trusted environment.${RESET}`);
 
   const prereqsOk = await checkPrereqs();
 

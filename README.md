@@ -1,5 +1,7 @@
 # ct-bot
 
+> **WARNING**: This bot runs Claude Code with `--dangerously-skip-permissions` and uses your personal Azure credentials (`az login`) to connect to Teams. Claude Code has **full access** to your filesystem and tools with **no permission prompts**. Only run in a trusted environment.
+
 Teams channel → Claude Code bridge. Each thread is an independent Claude Code session.
 
 ## Setup
@@ -10,7 +12,7 @@ az login
 npm run setup
 ```
 
-`setup` checks prerequisites (Node 18+, `az`, Claude Code CLI) and connects to your Teams channel — just post the code it gives you.
+`setup` checks prerequisites (Node 22+, `az`, Claude Code CLI) and connects to your Teams channel — just post the code it gives you.
 
 ## Run
 

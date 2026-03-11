@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "description": "Teams ↔ Claude Code bridge",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node --env-file=.env --watch src/index.ts",
