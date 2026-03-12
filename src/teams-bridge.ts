@@ -285,6 +285,10 @@ function htmlToText(s: string): string {
     .replace(/<img\s[^>]*src="([^"]*)"[^>]*>/gi, (_tag, src) => {
       return `[image: ${src}]`;
     })
+    // Preserve emojis: <emoji alt="😊" ...> or <emoji ...>😊</emoji> → the emoji character
+    .replace(/<emoji\s[^>]*alt="([^"]*)"[^>]*>[\s\S]*?<\/emoji>/gi, (_, alt) => alt)
+    .replace(/<emoji\s[^>]*alt="([^"]*)"[^>]*\/?>/gi, (_, alt) => alt)
+    .replace(/<emoji[^>]*>([\s\S]*?)<\/emoji>/gi, (_, inner) => inner.replace(/<[^>]+>/g, "").trim())
     // Strip remaining HTML tags
     .replace(/<[^>]+>/g, "")
     // Decode entities
@@ -454,6 +458,86 @@ function extractTeamsMessage(body: any, channelId: string): TeamsMessage | null 
   return { from, fromId, channelId, threadId, messageId, isNewThread, text, html, time };
 }
 
+// Track last-seen reaction state per message to detect changes
+const lastReactionState = new Map<string, Map<string, Set<string>>>();
+
+function extractReaction(body: any, channelId: string): TeamsMessage | null {
+  if (body.resourceType !== "MessageUpdate") return null;
+
+  const resource = body.resource ?? body;
+  const emotions: { key: string; users: { mri: string; time: number }[] }[] = resource.properties?.emotions;
+  if (!Array.isArray(emotions)) return null;
+
+  // Channel filter: check resource.to or resourceLink
+  const to = resource.to ?? "";
+  const resourceLink: string = body.resourceLink ?? "";
+  if (to !== channelId && !resourceLink.includes(encodeURIComponent(channelId)) && !resourceLink.includes(channelId)) return null;
+
+  // Only process reactions on bot messages (content starts with "AI:")
+  const content = resource.content ?? "";
+  if (!content.includes("AI:")) return null;
+
+  const messageId = resource.id ?? "";
+  const parentMessageId = String(body.parentmessageid ?? "");
+  const threadId = parentMessageId || messageId;
+
+  // Get previous state for this message
+  const prevState = lastReactionState.get(messageId) ?? new Map<string, Set<string>>();
+  const newState = new Map<string, Set<string>>();
+
+  // Find newly added reactions (not from the bot itself)
+  const newReactions: { key: string; userId: string }[] = [];
+
+  for (const emotion of emotions) {
+    const key = emotion.key.split(";")[0]!; // strip hash suffix like "boo;0-eus-..."
+    const userSet = new Set<string>();
+    for (const user of emotion.users) {
+      const userId = user.mri;
+      userSet.add(userId);
+
+      // Check if this is a new reaction
+      const prevUsers = prevState.get(key);
+      if (!prevUsers || !prevUsers.has(userId)) {
+        newReactions.push({ key, userId });
+      }
+    }
+    newState.set(key, userSet);
+  }
+
+  lastReactionState.set(messageId, newState);
+
+  // Prune old entries
+  if (lastReactionState.size > 500) {
+    const entries = [...lastReactionState.entries()];
+    for (let i = 0; i < entries.length - 200; i++) {
+      lastReactionState.delete(entries[i]![0]);
+    }
+  }
+
+  if (newReactions.length === 0) return null;
+
+  // Build the reaction message text
+  const originalContent = resource.content ?? "";
+  const originalText = htmlToText(originalContent).replace(/^AI:\s*/i, "").slice(0, 150);
+  const reactionList = newReactions.map(r => r.key).join(", ");
+  const text = `[Reacted "${reactionList}" to: "${originalText}${originalText.length >= 150 ? "..." : ""}"]`;
+
+  const from = resource.imdisplayname ?? "?";
+  const fromId = newReactions[0]!.userId.split(":").pop() ?? "";
+
+  return {
+    from,
+    fromId,
+    channelId,
+    threadId,
+    messageId: `reaction-${messageId}-${Date.now()}`,
+    isNewThread: false,
+    text,
+    html: "",
+    time: new Date().toISOString(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // WebSocket connection
 // ---------------------------------------------------------------------------
@@ -585,7 +669,7 @@ export async function startListener(
           const body = parseNotification(item);
           if (!body) continue;
 
-          const msg = extractTeamsMessage(body, channelId);
+          const msg = extractTeamsMessage(body, channelId) ?? extractReaction(body, channelId);
           if (!msg) continue;
 
           // Deduplicate
