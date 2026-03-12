@@ -94,6 +94,7 @@ class TeamsProgressUpdater {
   private messageId: string | null = null;
   private status = "🧠 Thinking...";
   private toolSteps: string[] = [];
+  private textPreview: string | null = null;
   private lastEditTime = 0;
   private editTimer: ReturnType<typeof setTimeout> | null = null;
   private finished = false;
@@ -120,6 +121,13 @@ class TeamsProgressUpdater {
   addToolStep(tool: string, input: string): void {
     this.toolSteps.push(`🔧 <b>${tool}</b> <code>${input}</code>`);
     this.status = `Running ${tool}...`;
+    this.textPreview = null; // clear text preview when a new tool starts
+    this.scheduleEdit();
+  }
+
+  addTextPreview(text: string): void {
+    this.textPreview = text;
+    this.status = "⏳ Working...";
     this.scheduleEdit();
   }
 
@@ -154,6 +162,9 @@ class TeamsProgressUpdater {
       const hidden = this.toolSteps.length - visible.length;
       if (hidden > 0) html += `<em>...${hidden} more step(s)</em><br>`;
       html += visible.join("<br>") + "<br><br>";
+    }
+    if (this.textPreview) {
+      html += `<p>${this.textPreview}</p><br>`;
     }
     html += `<em>${this.status}</em>`;
     return html;
@@ -238,7 +249,7 @@ export async function startOrchestrator(): Promise<void> {
           case "text":
             logText(threadId, event.text);
             auditLog(threadId, { direction: "outgoing", type: "text", text: event.text });
-            progress.setStatus("✍️ Composing response...");
+            progress.addTextPreview(formatResponse(event.text));
             break;
 
           case "result": {

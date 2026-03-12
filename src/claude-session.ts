@@ -1,4 +1,4 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type { HandoffRequest } from "./types.ts";
@@ -142,32 +142,29 @@ export async function runClaudeSession(opts: {
     signal.addEventListener("abort", () => abortController.abort(), { once: true });
   }
 
-  const queryOptions: Record<string, any> = {
+  const queryOptions: Options = {
     cwd,
     env: cleanEnv,
     abortController,
-    permissionMode: "bypassPermissions" as const,
+    permissionMode: "bypassPermissions",
     allowDangerouslySkipPermissions: true,
+    stderr: (data: string) => { process.stderr.write(`[claude-stderr] ${data}`); },
+    settingSources: ["user", "project"],
+    maxTurns: 30,
+    systemPrompt: {
+      type: "preset",
+      preset: "claude_code",
+      append: buildSystemPrompt(cwd),
+    },
     mcpServers: {
       workiq: {
-        type: "stdio" as const,
+        type: "stdio",
         command: "npx",
         args: ["-y", "@microsoft/workiq", "mcp"],
       },
     },
+    ...(resumeSessionId ? { resume: resumeSessionId } : {}),
   };
-
-  if (resumeSessionId) {
-    queryOptions.resume = resumeSessionId;
-  } else {
-    queryOptions.systemPrompt = {
-      type: "preset",
-      preset: "claude_code",
-      append: buildSystemPrompt(cwd),
-    };
-    queryOptions.settingSources = ["global", "project"];
-    queryOptions.maxTurns = 30;
-  }
 
   let sessionId: string = resumeSessionId ?? "";
   let resultText: string = "";
