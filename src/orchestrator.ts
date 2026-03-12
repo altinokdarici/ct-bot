@@ -1,6 +1,7 @@
-import { startListener, sendThreadReply, editThreadReply } from "./teams-bridge.ts";
+import { startListener, sendThreadReply, editThreadReply, uploadImageToTeams, resolveImages } from "./teams-bridge.ts";
 import { SessionManager } from "./session-manager.ts";
 import { auditLog } from "./audit-log.ts";
+import { escapeHtml } from "./escape-html.ts";
 import type { TeamsMessage } from "./types.ts";
 import type { ProgressEvent } from "./claude-session.ts";
 
@@ -17,16 +18,30 @@ const MAX_MESSAGE_LENGTH = 20_000;
 // Throttle Teams edits to avoid rate limits
 const EDIT_THROTTLE_MS = 2000;
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
-
 function formatResponse(text: string): string {
   if (/<[a-z][\s\S]*>/i.test(text)) return text;
   return escapeHtml(text).replace(/\n/g, "<br>");
+}
+
+const IMAGE_MARKER_REGEX = /<!--IMAGE:(.+?)-->/g;
+
+async function processImageMarkers(html: string, channelId: string): Promise<string> {
+  const matches = [...html.matchAll(IMAGE_MARKER_REGEX)];
+  if (matches.length === 0) return html;
+
+  let result = html;
+  for (const match of matches) {
+    const filePath = match[1]!;
+    try {
+      console.log(`[orchestrator] Uploading image: ${filePath}`);
+      const imgTag = await uploadImageToTeams(channelId, filePath);
+      result = result.replace(match[0], imgTag);
+    } catch (err: any) {
+      console.error(`[orchestrator] Image upload failed for ${filePath}:`, err.message);
+      result = result.replace(match[0], `<em>(image upload failed: ${escapeHtml(filePath)})</em>`);
+    }
+  }
+  return result;
 }
 
 function splitMessage(text: string): string[] {
@@ -211,7 +226,7 @@ export async function startOrchestrator(): Promise<void> {
 
     const promise = (async () => {
     try {
-      let currentPrompt = text;
+      let currentPrompt = await resolveImages(text);
       let handoffsRemaining = 3;
 
       // Loop: after a handoff with intent, re-send the extracted intent to the new environment
@@ -257,7 +272,8 @@ export async function startOrchestrator(): Promise<void> {
             auditLog(threadId, { direction: "outgoing", type: "result", text: event.text, meta: { costUsd: event.costUsd, durationMs: event.durationMs, turns: event.turns } });
             // Finalize immediately from the result event
             finalized = true;
-            const resultHtml = event.text ? formatResponse(event.text) : "<p><em>(no response)</em></p>";
+            let resultHtml = event.text ? formatResponse(event.text) : "<p><em>(no response)</em></p>";
+            resultHtml = await processImageMarkers(resultHtml, CHANNEL_ID);
             await progress.finalize(resultHtml);
 
             // Send overflow chunks if needed

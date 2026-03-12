@@ -1,6 +1,10 @@
 import { execSync } from "node:child_process";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { basename, join } from "node:path";
+import { tmpdir } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { randomUUID } from "node:crypto";
+import { escapeHtml } from "./escape-html.ts";
 import type { TeamsMessage } from "./types.ts";
 
 // ---------------------------------------------------------------------------
@@ -9,6 +13,12 @@ import type { TeamsMessage } from "./types.ts";
 
 const EPID = randomUUID();
 let conCounter = 0;
+
+const AMS_HEADERS = {
+  "User-Agent": "Mozilla/5.0 TeamsCDL/49",
+  "x-ms-client-version": "49/25010202142",
+  Referer: "https://teams.microsoft.com/",
+};
 
 // ---------------------------------------------------------------------------
 // Auth — az CLI tokens
@@ -66,6 +76,58 @@ async function getSkypeToken(aadToken: string): Promise<string> {
   const skypeToken = data.tokens?.skypeToken;
   if (!skypeToken) throw new Error("No skypeToken in authz response");
   return skypeToken;
+}
+
+// ---------------------------------------------------------------------------
+// Token manager — single cache for all auth tokens
+// ---------------------------------------------------------------------------
+
+const TOKEN_REFRESH_MS = 40 * 60 * 1000;
+
+interface AuthTokens {
+  aadToken: string;
+  skypeToken: string;
+  ic3Token: string;
+  region: string;
+  myOid: string;
+  displayName: string;
+}
+
+let cachedTokens: AuthTokens | null = null;
+let tokenRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let onTokenRefresh: (() => void) | null = null;
+
+async function getTokens(): Promise<AuthTokens> {
+  if (cachedTokens) return cachedTokens;
+
+  const { token: aadToken } = getAadToken();
+  const skypeToken = await getSkypeToken(aadToken);
+
+  const ic3 = getIc3Token();
+  if (!ic3) throw new Error("Could not get ic3 token");
+
+  const region = await probeRegion(ic3.token);
+  if (!region) throw new Error("Could not discover region");
+
+  const claims = decodeToken(ic3.token);
+  cachedTokens = {
+    aadToken,
+    skypeToken,
+    ic3Token: ic3.token,
+    region,
+    myOid: claims.oid,
+    displayName: claims.name || "",
+  };
+
+  if (!tokenRefreshTimer) {
+    tokenRefreshTimer = setInterval(() => {
+      cachedTokens = null;
+      console.log("[teams] Token cache cleared, triggering reconnect...");
+      onTokenRefresh?.();
+    }, TOKEN_REFRESH_MS);
+  }
+
+  return cachedTokens;
 }
 
 // ---------------------------------------------------------------------------
@@ -184,12 +246,125 @@ async function register(aadToken: string, skypeToken: string, surl: string): Pro
 // Notification parsing
 // ---------------------------------------------------------------------------
 
-function stripHtml(s: string): string {
+const INCOMING_IMAGES_DIR = join(tmpdir(), "ct-bot-images");
+mkdirSync(INCOMING_IMAGES_DIR, { recursive: true });
+
+async function downloadAmsImage(url: string): Promise<string | null> {
+  try {
+    const { skypeToken } = await getTokens();
+    const resp = await fetch(url, {
+      headers: {
+        ...AMS_HEADERS,
+        Authorization: `skype_token ${skypeToken}`,
+      },
+    });
+    if (!resp.ok) {
+      console.error(`[teams] Image download failed: ${resp.status} ${url}`);
+      return null;
+    }
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    const ext = resp.headers.get("content-type")?.includes("png") ? "png" : "jpg";
+    const filePath = join(INCOMING_IMAGES_DIR, `${randomUUID()}.${ext}`);
+    writeFileSync(filePath, buffer);
+    console.log(`[teams] Downloaded image: ${filePath} (${buffer.length} bytes)`);
+    return filePath;
+  } catch (err: any) {
+    console.error(`[teams] Image download error:`, err.message);
+    return null;
+  }
+}
+
+function htmlToText(s: string): string {
   return s
+    // Preserve links: <a href="url">text</a> → text (url)
+    .replace(/<a\s[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, (_, url, text) => {
+      const cleanText = text.replace(/<[^>]+>/g, "").trim();
+      return cleanText === url ? url : `${cleanText} (${url})`;
+    })
+    // Preserve images: <img src="url" alt="..."> → [image: url]
+    .replace(/<img\s[^>]*src="([^"]*)"[^>]*>/gi, (_tag, src) => {
+      return `[image: ${src}]`;
+    })
+    // Strip remaining HTML tags
     .replace(/<[^>]+>/g, "")
+    // Decode entities
     .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ").replace(/&#39;/g, "'").replace(/&quot;/g, '"')
     .trim();
+}
+
+async function downloadSharePointFile(url: string, fileName: string): Promise<string | null> {
+  try {
+    // Use Microsoft Graph sharing API to download the file
+    // Encode the URL: "u!" + base64url(url)
+    const encodedUrl = "u!" + Buffer.from(url).toString("base64url");
+    const graphUrl = `https://graph.microsoft.com/v1.0/shares/${encodedUrl}/driveItem/content`;
+
+    // Get a Graph token
+    const tenants = listTenantIds();
+    let graphToken: string | null = null;
+    for (const tid of tenants) {
+      graphToken = azToken(tid, "https://graph.microsoft.com");
+      if (graphToken) break;
+    }
+    if (!graphToken) {
+      console.error(`[teams] No Graph token available`);
+      return null;
+    }
+
+    const resp = await fetch(graphUrl, {
+      headers: { Authorization: `Bearer ${graphToken}` },
+      redirect: "follow",
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      console.error(`[teams] Graph download failed: ${resp.status} ${text.slice(0, 200)}`);
+      return null;
+    }
+
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    const ext = fileName.split(".").pop() ?? "bin";
+    const filePath = join(INCOMING_IMAGES_DIR, `${randomUUID()}.${ext}`);
+    writeFileSync(filePath, buffer);
+    console.log(`[teams] Downloaded file via Graph: ${filePath} (${buffer.length} bytes)`);
+    return filePath;
+  } catch (err: any) {
+    console.error(`[teams] SharePoint download error:`, err.message);
+    return null;
+  }
+}
+
+/** Download any AMS images and SharePoint files in the message, replace with local file paths */
+export async function resolveImages(text: string): Promise<string> {
+  let result = text;
+
+  // Resolve AMS images: [image: https://...]
+  const imagePattern = /\[image: (https:\/\/[^\]]+)\]/g;
+  const imageMatches = [...result.matchAll(imagePattern)];
+  for (const match of imageMatches) {
+    const url = match[1]!;
+    const localPath = await downloadAmsImage(url);
+    if (localPath) {
+      result = result.replace(match[0], `[image saved to: ${localPath}]`);
+    }
+  }
+
+  // Resolve SharePoint files: [file: name](https://...sharepoint...)
+  const filePattern = /\[file: ([^\]]+)\]\((https:\/\/[^)]+)\)/g;
+  const fileMatches = [...result.matchAll(filePattern)];
+  for (const match of fileMatches) {
+    const fileName = match[1]!;
+    const url = match[2]!;
+    const localPath = await downloadSharePointFile(url, fileName);
+    if (localPath) {
+      result = result.replace(match[0], `[file "${fileName}" saved to: ${localPath}]`);
+    } else {
+      result = result.replace(match[0], `[file "${fileName}" at: ${url}]`);
+    }
+  }
+
+  return result;
 }
 
 function parseNotification(raw: any): any {
@@ -223,10 +398,39 @@ function extractTeamsMessage(body: any, channelId: string): TeamsMessage | null 
 
   const to = resource.to ?? "";
 
-  if (!msgType || !["RichText/Html", "Text", "RichText"].includes(msgType)) return null;
+  if (!msgType || !["RichText/Html", "Text", "RichText", "RichText/Media"].includes(msgType)) return null;
 
   const html = resource.content ?? resource.body ?? "";
-  const text = msgType.startsWith("RichText") ? stripHtml(html) : html.trim();
+
+  // Build text from HTML + amsreferences + file attachments
+  let text = msgType.startsWith("RichText") ? htmlToText(html) : html.trim();
+
+  // If there are AMS image references, append them
+  const amsRefs: string[] = resource.amsreferences ?? [];
+  for (const ref of amsRefs) {
+    if (ref && !text.includes(ref)) {
+      const amsUrl = `https://as-api.asm.skype.com/v1/objects/${encodeURIComponent(ref)}/views/imgo`;
+      text += (text ? "\n" : "") + `[image: ${amsUrl}]`;
+    }
+  }
+
+  // Extract file attachments (Teams sends images/files via properties.files)
+  try {
+    const filesJson = resource.properties?.files;
+    if (filesJson) {
+      const files = typeof filesJson === "string" ? JSON.parse(filesJson) : filesJson;
+      if (Array.isArray(files)) {
+        for (const file of files) {
+          const fileUrl = file.fileInfo?.fileUrl;
+          const fileName = file.fileName ?? "file";
+          if (fileUrl) {
+            text += (text ? "\n" : "") + `[file: ${fileName}](${fileUrl})`;
+          }
+        }
+      }
+    }
+  } catch { /* ignore malformed files JSON */ }
+
   if (!text) return null;
 
   // Channel filter: resource.to must match our channel
@@ -355,42 +559,24 @@ export async function startListener(
   channelId: string,
   onMessage: (msg: TeamsMessage) => void,
 ): Promise<void> {
-  console.log("[teams] Getting AAD token...");
-  let { token: aadToken } = getAadToken();
-  const claims = decodeToken(aadToken);
+  console.log("[teams] Initializing tokens...");
+  let tokens = await getTokens();
+  const claims = decodeToken(tokens.aadToken);
   console.log(`[teams] Authenticated as: ${claims.name ?? claims.upn}`);
 
-  console.log("[teams] Getting Skype token...");
-  let skypeToken = await getSkypeToken(aadToken);
-
   console.log("[teams] Setting up Trouter...");
-  let trouter = await setupTrouter(skypeToken);
-  let wsSessionId = await socketioHandshake(trouter.socketio, trouter.connectparams, trouter.ccid, skypeToken);
+  let trouter = await setupTrouter(tokens.skypeToken);
+  let wsSessionId = await socketioHandshake(trouter.socketio, trouter.connectparams, trouter.ccid, tokens.skypeToken);
 
   const seenMessages = new Map<string, number>();
 
-  const TOKEN_REFRESH_MS = 45 * 60 * 1000;
-  let lastTokenRefresh = Date.now();
-
-  const refreshInterval = setInterval(async () => {
-    if (Date.now() - lastTokenRefresh > TOKEN_REFRESH_MS) {
-      try {
-        const newAad = getAadToken();
-        aadToken = newAad.token;
-        skypeToken = await getSkypeToken(aadToken);
-        lastTokenRefresh = Date.now();
-        console.log("[teams] Tokens refreshed");
-      } catch (err: any) {
-        console.error("[teams] Token refresh error:", err.message);
-      }
-    }
-  }, 60_000);
+  let activeWs: WebSocket | null = null;
 
   function connect() {
     console.log("[teams] Connecting WebSocket...");
-    connectWebSocket(trouter.socketio, wsSessionId, trouter.connectparams, trouter.ccid, skypeToken, aadToken, {
+    activeWs = connectWebSocket(trouter.socketio, wsSessionId, trouter.connectparams, trouter.ccid, tokens.skypeToken, tokens.aadToken, {
       async onConnected() {
-        await register(aadToken, skypeToken, trouter.surl);
+        await register(tokens.aadToken, tokens.skypeToken, trouter.surl);
         console.log("[teams] Listening for messages...");
       },
       onNotification(data) {
@@ -417,19 +603,31 @@ export async function startListener(
       },
       onClose() {
         console.log("[teams] Connection lost, reconnecting in 2s...");
+        activeWs = null;
         setTimeout(reconnect, 2000);
       },
       onError() {
         console.log("[teams] Connection error, reconnecting in 2s...");
+        activeWs = null;
         setTimeout(reconnect, 2000);
       },
     });
   }
 
+  // When tokens refresh, close the WebSocket so it reconnects with fresh tokens
+  onTokenRefresh = () => {
+    if (activeWs && activeWs.readyState === WebSocket.OPEN) {
+      console.log("[teams] Closing WebSocket for token refresh...");
+      activeWs.close();
+    }
+  };
+
   async function reconnect() {
     try {
-      trouter = await setupTrouter(skypeToken);
-      wsSessionId = await socketioHandshake(trouter.socketio, trouter.connectparams, trouter.ccid, skypeToken);
+      // Refresh tokens on reconnect
+      tokens = await getTokens();
+      trouter = await setupTrouter(tokens.skypeToken);
+      wsSessionId = await socketioHandshake(trouter.socketio, trouter.connectparams, trouter.ccid, tokens.skypeToken);
       connect();
     } catch (err: any) {
       console.error("[teams] Reconnect failed:", err.message, "— retrying in 5s...");
@@ -440,7 +638,6 @@ export async function startListener(
   connect();
 
   process.on("SIGINT", () => {
-    clearInterval(refreshInterval);
     console.log("[teams] Shutting down...");
     process.exit(0);
   });
@@ -450,29 +647,6 @@ export async function startListener(
 // Public API: Send thread reply
 // ---------------------------------------------------------------------------
 
-let cachedSendAuth: { token: string; region: string; myOid: string; displayName: string } | null = null;
-
-async function getSendAuth() {
-  if (cachedSendAuth) return cachedSendAuth;
-
-  const ic3 = getIc3Token();
-  if (!ic3) throw new Error("Could not get ic3 token for sending");
-
-  const region = await probeRegion(ic3.token);
-  if (!region) throw new Error("Could not discover region for sending");
-
-  const claims = decodeToken(ic3.token);
-  cachedSendAuth = {
-    token: ic3.token,
-    region,
-    myOid: claims.oid,
-    displayName: claims.name || "",
-  };
-  return cachedSendAuth;
-}
-
-// Refresh send auth periodically
-setInterval(() => { cachedSendAuth = null; }, 40 * 60 * 1000);
 
 // SAFETY: Only these channels are allowed to receive messages
 const ALLOWED_CHANNELS = new Set(
@@ -490,7 +664,7 @@ export async function sendThreadReply(
     return null;
   }
 
-  const auth = await getSendAuth();
+  const auth = await getTokens();
   const now = new Date().toISOString().replace(/\.\d{3}Z$/, ".000Z");
   const clientMsgId = String(Math.floor(Math.random() * 9e18) + 1e18);
 
@@ -534,7 +708,7 @@ export async function sendThreadReply(
   const resp = await fetch(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${auth.token}`,
+      Authorization: `Bearer ${auth.ic3Token}`,
       "Content-Type": "application/json",
       behavioroverride: "redirectAs404",
       "x-ms-migration": "True",
@@ -568,7 +742,7 @@ export async function editThreadReply(
 ): Promise<void> {
   if (!ALLOWED_CHANNELS.has(channelId)) return;
 
-  const auth = await getSendAuth();
+  const auth = await getTokens();
   const convWithThread = `${channelId};messageid=${threadRootId}`;
   const encodedConv = encodeURIComponent(convWithThread);
   const url = `https://teams.cloud.microsoft/api/chatsvc/${auth.region}/v1/users/ME/conversations/${encodedConv}/messages/${messageId}`;
@@ -597,7 +771,7 @@ export async function editThreadReply(
   const resp = await fetch(url, {
     method: "PUT",
     headers: {
-      Authorization: `Bearer ${auth.token}`,
+      Authorization: `Bearer ${auth.ic3Token}`,
       "Content-Type": "application/json",
       behavioroverride: "redirectAs404",
       "x-ms-migration": "True",
@@ -611,4 +785,69 @@ export async function editThreadReply(
   if (resp.status !== 200 && resp.status !== 204 && resp.status !== 201) {
     console.error(`[teams] Edit failed (${resp.status}) msgId=${messageId}: ${respText.slice(0, 300)}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Public API: Upload image and return HTML img tag
+// ---------------------------------------------------------------------------
+
+const AMS_HOST = "https://as-prod.asyncgw.teams.microsoft.com";
+
+export async function uploadImageToTeams(
+  channelId: string,
+  filePath: string,
+): Promise<string> {
+  const auth = await getTokens();
+  const filename = basename(filePath);
+  const imageData = readFileSync(filePath);
+
+  // Step 1: Create object
+  const createResp = await fetch(`${AMS_HOST}/v1/objects/`, {
+    method: "POST",
+    headers: {
+      ...AMS_HEADERS,
+      "Content-Type": "application/json",
+      Authorization: `skype_token ${auth.skypeToken}`,
+      Accept: "application/json",
+    },
+    body: JSON.stringify({
+      type: "pish/image",
+      permissions: { [channelId]: ["read"] },
+      filename,
+      sharingMode: "Inline",
+    }),
+  });
+
+  if (!createResp.ok) {
+    const text = await createResp.text();
+    throw new Error(`AMS create failed: ${createResp.status} ${text}`);
+  }
+
+  const { id } = (await createResp.json()) as { id: string };
+  console.log(`[teams] AMS object created: ${id}`);
+
+  // Step 2: Upload content
+  const uploadResp = await fetch(
+    `${AMS_HOST}/v1/objects/${encodeURIComponent(id)}/content/imgpsh`,
+    {
+      method: "PUT",
+      headers: {
+        ...AMS_HEADERS,
+        "Content-Type": "application/octet-stream",
+        Authorization: `skype_token ${auth.skypeToken}`,
+      },
+      body: imageData,
+    },
+  );
+
+  if (!uploadResp.ok) {
+    const text = await uploadResp.text();
+    throw new Error(`AMS upload failed: ${uploadResp.status} ${text}`);
+  }
+
+  console.log(`[teams] Image uploaded: ${filename} (${imageData.length} bytes)`);
+
+  // Step 3: Return img HTML
+  const imageUrl = `https://as-api.asm.skype.com/v1/objects/${encodeURIComponent(id)}/views/imgo`;
+  return `<img itemscope="image" style="vertical-align:bottom" src="${imageUrl}" alt="${escapeHtml(filename)}" itemtype="http://schema.skype.com/AMSImage" id="${id}" itemid="${id}" href="${imageUrl}" target-src="${imageUrl}">`;
 }

@@ -68,6 +68,14 @@ For ANY work-related question (meetings, emails, files, colleagues, schedules), 
 </ul>
 Prefer WorkIQ over web search for anything about the user's work context.
 </RULE>
+
+<RULE name="IMAGES" priority="HIGH">
+To include an image or screenshot in your response, save it to a file and emit:
+&lt;!--IMAGE:/absolute/path/to/file.png--&gt;
+
+The system will upload it to Teams and display it inline. You can include multiple image markers.
+Use this for screenshots, generated diagrams, diff images, or any visual content.
+</RULE>
 </CRITICAL-RULES>
 
 <MEMORY>
