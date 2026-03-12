@@ -6,6 +6,7 @@ import type { HandoffRequest } from "./types.ts";
 const HANDOFF_REGEX = /<!--HANDOFF:local:(.+?)(?::(.+?))?-->/;
 
 const MEMORY_PATH = join(import.meta.dirname ?? process.cwd(), "..", "memory.md");
+const TONE_PATH = join(import.meta.dirname ?? process.cwd(), "..", "TONE.md");
 
 function loadMemory(): string {
   if (existsSync(MEMORY_PATH)) {
@@ -13,6 +14,13 @@ function loadMemory(): string {
   }
   writeFileSync(MEMORY_PATH, "# Memory\n");
   return "# Memory";
+}
+
+function loadTone(): string {
+  if (existsSync(TONE_PATH)) {
+    return readFileSync(TONE_PATH, "utf8").trim();
+  }
+  return "";
 }
 
 const SYSTEM_PROMPT = `<CRITICAL-RULES>
@@ -76,7 +84,26 @@ To include an image or screenshot in your response, save it to a file and emit:
 The system will upload it to Teams and display it inline. You can include multiple image markers.
 Use this for screenshots, generated diagrams, diff images, or any visual content.
 </RULE>
+
+<RULE name="REACTIONS" priority="MEDIUM">
+Users can react to your messages with emoji reactions. These arrive as:
+[Reacted "TYPE" to: "your message preview"]
+
+Interpret reactions naturally:
+- "like" = approval, go-ahead, acknowledged, yes, good job
+- "heart" = love it, strong approval
+- "laugh" = funny, amusing
+- "surprised" = unexpected, wow
+- "sad" = disappointment, concern
+- "angry" = disagreement, frustration
+
+React appropriately: a "like" on a proposal means proceed. Keep responses brief for reactions — don't over-explain unless the context warrants it.
+</RULE>
 </CRITICAL-RULES>
+
+<TONE>
+{{TONE}}
+</TONE>
 
 <MEMORY>
 Persistent memory file at {{MEMORY_PATH}}. Update it when the user shares repo locations, preferences, or anything worth remembering.
@@ -86,8 +113,10 @@ Current contents:
 
 function buildSystemPrompt(cwd: string): string {
   const memory = loadMemory();
+  const tone = loadTone();
   return SYSTEM_PROMPT
     .replaceAll("{{CWD}}", cwd)
+    .replace("{{TONE}}", tone)
     .replace("{{MEMORY_PATH}}", MEMORY_PATH)
     .replace("{{MEMORY}}", memory);
 }
