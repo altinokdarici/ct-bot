@@ -82,12 +82,8 @@ export class SessionManager {
         signal,
       });
     } catch (err) {
-      // If resume failed, clear sessionId so next attempt starts fresh
-      if (session.sessionId) {
-        console.log(`[session] Clearing stale session ${session.sessionId.slice(0, 8)} for thread ${threadId}`);
-        session.sessionId = null;
-        this.persist();
-      }
+      // Never clear sessionId — preserve conversation history for resume.
+      // If the session is truly broken, the user should start a new thread.
       throw err;
     }
 
